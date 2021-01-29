@@ -68,6 +68,7 @@ class Tree(object):
         self.root = None
         self.version = utils.VERSION
         self.original_data = dict()
+        self.raw_data = dict()
 
         # Special handling for top parent
         if self.parent is None:
@@ -369,6 +370,7 @@ class Tree(object):
         # Save source file
         if source is not None:
             self.children[name].sources.append(source)
+            self.children[name].raw_data = data
 
     def grow(self, path):
         """
@@ -415,6 +417,7 @@ class Tree(object):
             # Handle main.fmf as data for self
             if filename == MAIN:
                 self.sources.append(fullpath)
+                self.raw_data = data
                 self.update(data)
             # Handle other *.fmf files as children
             else:
@@ -544,3 +547,43 @@ class Tree(object):
                 "No tree node found for '{0}' reference".format(reference))
         # FIXME Should be able to remove .cache if required
         return found_node
+
+    def get_raw_data_node(self):
+        raw_data_node = self
+        id_list = list()
+        while True:
+            raw_data = raw_data_node.raw_data
+            if raw_data:
+                return raw_data_node, id_list
+            elif not raw_data_node.parent:
+                raise utils.RootError("Cannot find root node with raw_data, very strange")
+            else:
+                id_list.insert(0, "/" + raw_data_node.name.rsplit("/")[-1])
+                raw_data_node = raw_data_node.parent
+
+    def modify(self, data, method="update"):
+        """
+        Modify node metadata via method.
+        method is any method what contains python dictionary (default: update)
+        and data is attribute of the method
+
+        WARNING:
+        It invalidates all data in Tree, after all modification, please reload the data.
+        Any node reference could be invalid what you use in your code.
+
+        """
+        raw_data_node, id_list = self.get_raw_data_node()
+        raw_data = raw_data_node.raw_data
+        for key in id_list:
+            raw_data = raw_data[key]
+        getattr(raw_data, method)(data)
+        self.store()
+
+    def reload(self):
+        return Tree(self.root).find(self.name)
+
+    def store(self):
+        raw_data_node, _ = self.get_raw_data_node()
+        target_file = raw_data_node.sources[-1]
+        with open(target_file, "w") as fd:
+            yaml.safe_dump(raw_data_node.raw_data, fd)
