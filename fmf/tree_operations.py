@@ -10,6 +10,53 @@ import fmf.utils as utils
 class Merger:
     """Apply merge operators independently of the metadata tree."""
 
+    def merge_tree_layers(self, layers):
+        """Merge loaded tree layers, including repeated logical nodes.
+
+        This method operates on tree-like objects. Each object must expose
+        ``data`` and ``children``; children
+        with the same name are merged recursively. This models a logical
+        item contributed by several raw trees, for example ``/a/b`` from a
+        root ``main.fmf`` and ``/a/b/main.fmf``. The first layer supplies the
+        tree structure and later layers overlay it in order.
+
+        The input layers are not modified. The returned tree is a deep copy
+        of the first layer, with later contributions merged at their existing
+        hierarchy points. This is intentionally separate from filesystem
+        discovery so loaders can call it after all raw trees are available.
+        """
+        layers = list(layers)
+        if not layers:
+            return None
+        result = copy.deepcopy(layers[0])
+        self._materialize_tree(result)
+        for layer in layers[1:]:
+            self._merge_tree_node(result, layer)
+        return result
+
+    def _materialize_tree(self, node):
+        node.data = self.merge({}, node.data, getattr(node, 'name', '/'))
+        for child in getattr(node, 'children', {}).values():
+            self._materialize_tree(child)
+
+    def _merge_tree_node(self, target, source):
+        self.merge(target.data, source.data, getattr(target, 'name', '/'))
+        for name, source_child in source.children.items():
+            if name in target.children:
+                self._merge_tree_node(target.children[name], source_child)
+                continue
+            child = copy.deepcopy(source_child)
+            self._reparent(child, target)
+            target.children[name] = child
+
+    def _reparent(self, node, parent):
+        if hasattr(node, 'parent'):
+            node.parent = parent
+        if hasattr(node, 'root'):
+            node.root = parent.root
+        for child in getattr(node, 'children', {}).values():
+            self._reparent(child, node)
+
     def merge(self, data, source, name='/'):
         for key, value in source.items():
             if key.endswith('+'):
